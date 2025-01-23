@@ -1,0 +1,8 @@
+@font-face {
+    font-family: 'Lorenzo-Sans';
+    src: url('/fonts/Lorenzo-Sans.woff2') format('woff2'),
+         url('/fonts/Lorenzo-Sans.woff') format('woff'),
+         url('/fonts/Lorenzo-Sans.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+  }
