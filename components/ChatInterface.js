@@ -38,8 +38,39 @@ function ChatInterface({ loopDelay = 5000 }) {
   const [showContent, setShowContent] = useState(true);
   const [showGenerating, setShowGenerating] = useState(false);
   const [showProcessing, setShowProcessing] = useState(false);
-
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [isAudioLoaded, setIsAudioLoaded] = useState(false);
+  
   const timeoutRef = useRef(null);
+  const audioRef = useRef(null);
+  const typingStartTimeRef = useRef(null);
+
+  // Function to load audio and get its duration
+  const loadAudioForMessage = useCallback((messageIndex) => {
+    return new Promise((resolve, reject) => {
+      const audioNumber = messageIndex.toString().padStart(3, '0');
+      const audioPath = `/audio/${audioNumber}.mp3`;
+      const audio = new Audio(audioPath);
+      
+      audio.addEventListener('loadedmetadata', () => {
+        setAudioDuration(audio.duration);
+        setIsAudioLoaded(true);
+        resolve(audio);
+      });
+      
+      audio.addEventListener('error', (e) => {
+        reject(new Error(`Error loading audio: ${e.message}`));
+      });
+    });
+  }, []);
+
+  // Function to start typing with proper timing
+  const startTypingWithAudio = useCallback((audio) => {
+    typingStartTimeRef.current = Date.now();
+    audio.play();
+    setCharIndex(0);
+    setCurrentText('');
+  }, []);
 
   useEffect(() => {
     fetch('/api/conversation')
@@ -87,39 +118,50 @@ function ChatInterface({ loopDelay = 5000 }) {
       });
   }, []);
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     setHasStarted(true);
-    setCurrentMessageIndex(0);
-  }, []);
-
-  useEffect(() => {
-    if (currentMessageIndex >= conversation.length) {
+    setIsAudioLoaded(false);
+    
+    try {
+      const firstAudio = await loadAudioForMessage(0);
+      audioRef.current = firstAudio;
+      // Wait briefly to ensure audio duration is set
       setTimeout(() => {
-        setCurrentMessageIndex(-1);
-        setCharIndex(0);
-        setCurrentText('');
-        setHasStarted(false);
-        setShowGenerating(false);
-        setShowProcessing(false);
-      }, loopDelay);
-      return;
+        startTypingWithAudio(firstAudio);
+        setCurrentMessageIndex(0);
+      }, 100);
+    } catch (error) {
+      console.error('Error loading first audio:', error);
+      setCurrentMessageIndex(0);
     }
+  }, [loadAudioForMessage, startTypingWithAudio]);
 
-    if (currentMessageIndex === -1) return;
+  // Effect for typing and audio synchronization
+  useEffect(() => {
+    if (!isAudioLoaded || currentMessageIndex === -1 || !audioDuration) return;
 
     const currentMessage = conversation[currentMessageIndex];
-    
+    if (!currentMessage) return;
+
+    // Handle message completion
     if (charIndex >= currentMessage.content.length) {
       setShowGenerating(true);
-      const imageDelay = Math.random() * 3000 + 2000; // Random between 2-5 seconds
+      const imageDelay = Math.random() * 3000 + 2000;
       timeoutRef.current = setTimeout(() => {
         setShowProcessing(true);
         setShowGenerating(false);
-        const responseDelay = Math.random() * 2000 + 1000; // Random between 1-3 seconds
+        const responseDelay = Math.random() * 2000 + 1000;
         setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.pause();
+          }
+          setIsAudioLoaded(false);
           setCurrentMessageIndex(prev => prev + 1);
-          setCharIndex(0);
-          setCurrentText('');
+          loadAudioForMessage(currentMessageIndex + 1)
+            .then(nextAudio => {
+              audioRef.current = nextAudio;
+              startTypingWithAudio(nextAudio);
+            });
           setShowGenerating(false);
           setShowProcessing(false);
         }, responseDelay);
@@ -127,29 +169,46 @@ function ChatInterface({ loopDelay = 5000 }) {
       return;
     }
 
-    let delay;
-    const baseDelay = 30;
-    const random = Math.random();
+    // Calculate exact timing for each character
+    const messageLength = currentMessage.content.length;
     
-    if (random < 0.1) {
-      delay = baseDelay * 5;
-    } else if (random < 0.3) {
-      delay = baseDelay * (1.5 + Math.random());
-    } else {
-      delay = baseDelay * (0.8 + Math.random() * 0.4);
-    }
-
+    // Distribute characters evenly across audio duration
+    const interval = (audioDuration * 1000) / messageLength;
+    
     timeoutRef.current = setTimeout(() => {
-      setCurrentText(prev => prev + currentMessage.content[charIndex]);
-      setCharIndex(prev => prev + 1);
-    }, delay);
+      const elapsedTime = (Date.now() - typingStartTimeRef.current) / 1000;
+      const shouldBeAtChar = Math.floor((elapsedTime / audioDuration) * messageLength);
+      
+      // Catch up if we're behind
+      if (shouldBeAtChar > charIndex) {
+        setCurrentText(currentMessage.content.slice(0, shouldBeAtChar));
+        setCharIndex(shouldBeAtChar);
+      } else {
+        // Normal typing
+        setCurrentText(prev => prev + currentMessage.content[charIndex]);
+        setCharIndex(prev => prev + 1);
+      }
+    }, interval);
 
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [currentMessageIndex, charIndex, conversation, loopDelay]);
+  }, [currentMessageIndex, charIndex, conversation, audioDuration, isAudioLoaded, loadAudioForMessage, startTypingWithAudio]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const getCurrentMessage = useCallback(() => {
     if (currentMessageIndex === -1 || currentMessageIndex >= conversation.length) return null;
