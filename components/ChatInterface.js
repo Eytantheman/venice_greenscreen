@@ -248,7 +248,7 @@ function ChatInterface({ loopDelay = 5000 }) {
                 {showGenerating && (
                   <div className="mt-6 flex items-center space-x-2">
                     <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/>
-                    <span className="text-white text-lg font-lorenzo-sans">generating new image...</span>
+                    <span className="text-white text-lg font-lorenzo-sans">generating next iteration...</span>
                   </div>
                 )}
                 {showProcessing && (
